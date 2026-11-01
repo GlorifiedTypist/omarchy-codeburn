@@ -5,7 +5,7 @@ All notable changes to the CodeBurn Omarchy shell plugin will be documented in t
 ## Unreleased
 
 ### Added
-- **DeepSeek status**: Popup section after the period overview with the CLI's current peak or off-peak phase, countdown to `nextChangeAt` (local and UTC), and the published UTC windows. One refresh is issued after that instant so the next phase comes from the CLI. Per-model USD rate cards are intentionally not shown.
+- **DeepSeek status**: Popup section after the period overview with the CLI's current peak or off-peak phase, countdown to `nextChangeAt` (local and UTC), the published UTC windows, and the next Chinese public holiday from `deepseek.nextHoliday` (UTC date or date range). One refresh is issued after that instant so the next phase comes from the CLI. Per-model USD rate cards are intentionally not shown.
 
 ### Changed
 - Bar badge stays cost-only (`󰈸 $X.XX`); DeepSeek phase is not appended. Tooltip still mentions phase and the next flip when present.

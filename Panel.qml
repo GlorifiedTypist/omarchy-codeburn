@@ -111,7 +111,7 @@ Panel {
   readonly property string deepseekFlipLine: buildDeepseekFlipLine(deepseekPhase, deepseekNextChangeMs, nowMs)
   readonly property string deepseekWhenLine: buildDeepseekWhenLine(deepseekNextChangeMs)
   readonly property string deepseekWindowsLine: buildDeepseekWindowsLine(deepseekRaw)
-  readonly property string deepseekHolidayLine: (deepseekRaw && deepseekRaw.holiday === true) ? "UTC date is a Chinese public holiday" : ""
+  readonly property string deepseekHolidayLine: buildDeepseekHolidayLine(deepseekRaw)
   readonly property string deepseekFootnote: buildDeepseekFootnote(deepseekRaw)
   readonly property string barPhaseText: (!isOnline || deepseekPhase === "") ? "" : deepseekPhase
   readonly property var deepseekRateRows: [
@@ -253,6 +253,25 @@ Panel {
     if (clock !== "") return "Peak windows " + clock
     if (days !== "") return "Peak days " + days
     return ""
+  }
+
+
+  function buildDeepseekHolidayLine(block) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return ""
+    var nh = block.nextHoliday
+    var start = ""
+    var end = ""
+    if (nh && typeof nh === "object" && !Array.isArray(nh)) {
+      if (nh.start !== undefined && nh.start !== null) start = String(nh.start).trim()
+      if (nh.end !== undefined && nh.end !== null) end = String(nh.end).trim()
+    }
+    if (block.holiday === true) {
+      if (end !== "") return "Chinese public holiday through " + end + " UTC"
+      return "UTC date is a Chinese public holiday"
+    }
+    if (start === "") return ""
+    if (end !== "" && end !== start) return "Next Chinese holiday · " + start + " – " + end + " UTC"
+    return "Next Chinese holiday · " + start + " UTC"
   }
 
   function aliasSummary(list) {
