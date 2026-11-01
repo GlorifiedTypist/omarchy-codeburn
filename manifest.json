@@ -4,7 +4,7 @@
   "name": "CodeBurn",
   "version": "1.0.0",
   "author": "Sean Erswell-Liljefelt",
-  "description": "Real-time AI spend and token usage tracker with model breakdown and provider stats for Omarchy.",
+  "description": "Real-time AI spend and token usage tracker with model breakdown, provider stats, and DeepSeek peak/off-peak rates for Omarchy.",
   "license": "MIT",
   "kinds": [
     "bar-widget"
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "CodeBurn",
-    "description": "Status bar spend badge and detailed AI analytics popup.",
+    "description": "Status bar spend badge, DeepSeek peak/off-peak phase, and detailed AI analytics popup.",
     "category": "AI",
     "aliases": ["burn", "ai-cost"],
     "allowMultiple": false,

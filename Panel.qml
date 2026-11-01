@@ -85,12 +85,55 @@ Panel {
   readonly property var currency: statusData && statusData.currency ? statusData.currency : ({ symbol: "$", code: "USD" })
   readonly property string currencySymbol: currency && currency.symbol ? String(currency.symbol) : "$"
 
+  // DeepSeek peak schedule is whatever the CLI put on `deepseek`. Do not derive phase from the clock.
+  readonly property var deepseekRaw: {
+    var block = statusData ? statusData.deepseek : null
+    if (!block || typeof block !== "object" || Array.isArray(block)) return null
+    return block
+  }
+  readonly property string deepseekPhase: {
+    if (!deepseekRaw) return ""
+    var phase = deepseekRaw.phase
+    if (phase === "peak" || phase === "off-peak") return phase
+    return ""
+  }
+  readonly property color deepseekTone: deepseekPhase === "off-peak" ? accentColor : flameColor
+  readonly property var deepseekNextChangeMs: {
+    if (!deepseekRaw) return null
+    var raw = deepseekRaw.nextChangeAt
+    if (raw === undefined || raw === null || String(raw).trim() === "") return null
+    var ms = Date.parse(String(raw))
+    if (typeof ms !== "number" || ms !== ms || ms <= 0) return null
+    return ms
+  }
+  readonly property var deepseekModels: buildDeepseekModels(deepseekRaw)
+  readonly property bool showDeepSeek: isOnline && (deepseekPhase !== "" || deepseekModels.length > 0)
+  readonly property string deepseekFlipLine: buildDeepseekFlipLine(deepseekPhase, deepseekNextChangeMs, nowMs)
+  readonly property string deepseekWhenLine: buildDeepseekWhenLine(deepseekNextChangeMs)
+  readonly property string deepseekWindowsLine: buildDeepseekWindowsLine(deepseekRaw)
+  readonly property string deepseekHolidayLine: (deepseekRaw && deepseekRaw.holiday === true) ? "UTC date is a Chinese public holiday" : ""
+  readonly property string deepseekFootnote: buildDeepseekFootnote(deepseekRaw)
+  readonly property string barPhaseText: (!isOnline || deepseekPhase === "") ? "" : deepseekPhase
+  readonly property var deepseekRateRows: [
+    { field: "inputCacheHitPerMillion", label: "Cache hit" },
+    { field: "inputCacheMissPerMillion", label: "Cache miss" },
+    { field: "outputPerMillion", label: "Output" }
+  ]
+  property double deepseekRefreshForMs: -1
+
   readonly property bool isOnline: !hasError && statusData !== null
   readonly property string barCostText: isOnline ? formatCost(cost) : "--"
-  readonly property string barStatusText: "󰈸 " + barCostText
-  readonly property string barTooltipText: isOnline
-    ? "CodeBurn (" + selectedPeriodLabel + "): " + formatCost(cost) + " · " + calls + " calls · " + sessions + " sessions (right-click to refresh)"
-    : "CodeBurn: status unavailable (right-click to refresh)"
+  readonly property string barStatusText: barPhaseText !== "" ? ("󰈸 " + barCostText + " · " + barPhaseText) : ("󰈸 " + barCostText)
+  readonly property string barTooltipText: {
+    var base = isOnline
+      ? ("CodeBurn (" + selectedPeriodLabel + "): " + formatCost(cost) + " · " + calls + " calls · " + sessions + " sessions")
+      : "CodeBurn: status unavailable"
+    if (barPhaseText !== "") {
+      base += " · DeepSeek " + barPhaseText
+      if (deepseekFlipLine !== "") base += " · " + deepseekFlipLine
+    }
+    return base + " (right-click to refresh)"
+  }
 
   visible: true
   implicitWidth: button.implicitWidth
@@ -114,6 +157,189 @@ Panel {
   function formatNumber(n) {
     var num = Number(n || 0)
     return num.toLocaleString()
+  }
+
+  function finiteNumber(value) {
+    if (value === undefined || value === null || value === "") return NaN
+    var n = Number(value)
+    if (!isFinite(n)) return NaN
+    return n
+  }
+
+  // USD per 1M tokens. Keep at least two decimals so a JSON 0.3 still reads as $0.30,
+  // and keep extra digits when the published rate needs them ($0.044, $0.006).
+  function formatUsdPerMillion(value) {
+    var n = finiteNumber(value)
+    if (n !== n) return "—"
+    var negative = n < 0
+    var abs = Math.abs(n)
+    var digits = (abs > 0 && abs < 0.000001) ? 8 : 6
+    var fixed = abs.toFixed(digits)
+    var bits = fixed.split(".")
+    var frac = bits.length > 1 ? bits[1] : ""
+    frac = frac.replace(/0+$/, "")
+    while (frac.length < 2) frac += "0"
+    return (negative ? "-" : "") + "$" + bits[0] + "." + frac
+  }
+
+  function hasRate(rates, key) {
+    if (!rates || typeof rates !== "object" || Array.isArray(rates)) return false
+    var n = finiteNumber(rates[key])
+    return n === n
+  }
+
+  function rateText(rates, key) {
+    if (!hasRate(rates, key)) return "—"
+    return formatUsdPerMillion(rates[key])
+  }
+
+  function formatDuration(ms) {
+    var totalMin = Math.floor(Number(ms) / 60000)
+    if (!(totalMin >= 1)) return "less than a minute"
+    var days = Math.floor(totalMin / 1440)
+    var hours = Math.floor(totalMin / 60) % 24
+    var mins = totalMin % 60
+    if (days > 0) return days + "d " + hours + "h"
+    if (hours > 0) return hours + "h " + mins + "m"
+    return mins + "m"
+  }
+
+  function formatClock(ms, utc) {
+    var d = new Date(ms)
+    var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    var hh = utc ? d.getUTCHours() : d.getHours()
+    var mm = utc ? d.getUTCMinutes() : d.getMinutes()
+    var dayIndex = utc ? d.getUTCDay() : d.getDay()
+    var pad = function(n) { return (n < 10 ? "0" : "") + n }
+    var day = days[dayIndex] || ""
+    return day + " " + pad(hh) + ":" + pad(mm)
+  }
+
+  function buildDeepseekFlipLine(phase, nextMs, now) {
+    if (typeof nextMs !== "number" || nextMs !== nextMs) return ""
+    var target = phase === "peak" ? "off-peak" : (phase === "off-peak" ? "peak" : "the next phase")
+    if (Number(now) >= nextMs) return "Switch to " + target + " is due — refresh to update"
+    return "Switches to " + target + " in " + formatDuration(nextMs - Number(now))
+  }
+
+  function buildDeepseekWhenLine(nextMs) {
+    if (typeof nextMs !== "number" || nextMs !== nextMs) return ""
+    return formatClock(nextMs, false) + " local · " + formatClock(nextMs, true) + " UTC"
+  }
+
+  function buildDeepseekWindowsLine(block) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return ""
+    var days = ""
+    if (block.peakDaysUtc !== undefined && block.peakDaysUtc !== null && String(block.peakDaysUtc).trim() !== "")
+      days = String(block.peakDaysUtc).trim()
+    var parts = []
+    if (Array.isArray(block.peakWindowsUtc)) {
+      for (var i = 0; i < block.peakWindowsUtc.length; i++) {
+        var span = block.peakWindowsUtc[i]
+        if (!span || typeof span !== "object" || Array.isArray(span)) continue
+        if (span.start === undefined || span.start === null || span.end === undefined || span.end === null) continue
+        var start = String(span.start).trim()
+        var end = String(span.end).trim()
+        if (start === "" || end === "") continue
+        parts.push(start + "–" + end)
+      }
+    }
+    var clock = parts.join(", ")
+    var tz = ""
+    if (block.timezone !== undefined && block.timezone !== null && String(block.timezone).trim() !== "")
+      tz = String(block.timezone).trim()
+    if (clock !== "" && tz !== "") clock = clock + " " + tz
+    if (days !== "" && clock !== "") return "Peak windows " + days + " · " + clock
+    if (clock !== "") return "Peak windows " + clock
+    if (days !== "") return "Peak days " + days
+    return ""
+  }
+
+  function aliasSummary(list) {
+    if (!Array.isArray(list)) return ""
+    var names = []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] === undefined || list[i] === null) continue
+      var text = String(list[i]).trim()
+      if (text === "") continue
+      names.push(text)
+    }
+    if (names.length === 0) return ""
+    var shown = names.slice(0, 3)
+    var summary = shown.join(", ")
+    if (names.length > shown.length) summary += " +" + (names.length - shown.length)
+    return summary
+  }
+
+  function usableRateCard(rates) {
+    return hasRate(rates, "inputCacheHitPerMillion")
+      || hasRate(rates, "inputCacheMissPerMillion")
+      || hasRate(rates, "outputPerMillion")
+  }
+
+  function buildDeepseekModels(block) {
+    if (!block || typeof block !== "object" || Array.isArray(block) || !Array.isArray(block.models)) return []
+    var out = []
+    var limit = block.models.length
+    if (limit > 12) limit = 12
+    for (var i = 0; i < limit; i++) {
+      var model = block.models[i]
+      if (!model || typeof model !== "object" || Array.isArray(model)) continue
+      var label = ""
+      if (model.label !== undefined && model.label !== null && String(model.label).trim() !== "")
+        label = String(model.label).trim()
+      else if (model.id !== undefined && model.id !== null && String(model.id).trim() !== "")
+        label = String(model.id).trim()
+      if (label === "") continue
+      var peak = usableRateCard(model.peak) ? model.peak : null
+      var offPeak = usableRateCard(model.offPeak) ? model.offPeak : null
+      if (!peak && !offPeak) continue
+      var id = ""
+      if (model.id !== undefined && model.id !== null) id = String(model.id).trim()
+      out.push({
+        label: label,
+        id: id,
+        aliases: aliasSummary(model.alsoBilledAs),
+        peak: peak || {},
+        offPeak: offPeak || {}
+      })
+    }
+    return out
+  }
+
+  function formatFactor(value) {
+    var n = finiteNumber(value)
+    if (n !== n || n <= 0) return ""
+    var rounded = Math.round(n * 1000) / 1000
+    return String(rounded) + "×"
+  }
+
+  function providerDisplayName(id) {
+    if (id === "dsh") return "DeepSeek Harness (dsh)"
+    if (id === "claude") return "Claude (claude)"
+    return id
+  }
+
+  function buildDeepseekFootnote(block) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return ""
+    var bits = []
+    if (Array.isArray(block.appliesToProviders)) {
+      var names = []
+      for (var i = 0; i < block.appliesToProviders.length; i++) {
+        var entry = block.appliesToProviders[i]
+        if (entry === undefined || entry === null) continue
+        var id = String(entry).trim()
+        if (id === "") continue
+        names.push(providerDisplayName(id))
+      }
+      if (names.length === 1) bits.push("Applies to " + names[0])
+      else if (names.length === 2) bits.push("Applies to " + names[0] + " and " + names[1])
+      else if (names.length > 2) bits.push("Applies to " + names.slice(0, names.length - 1).join(", ") + ", and " + names[names.length - 1])
+    }
+    var factor = formatFactor(block.offPeakFactor)
+    if (factor !== "") bits.push("Off-peak is " + factor + " peak")
+    if (block.missingTimestamp === "peak") bits.push("Calls with no timestamp bill at peak")
+    return bits.join(" · ")
   }
 
   function timeAgo(ms) {
@@ -215,9 +441,18 @@ Panel {
   Timer {
     id: tickTimer
     interval: 15000
-    running: root.opened
+    running: root.opened || root.showDeepSeek
     repeat: true
-    onTriggered: root.nowMs = Date.now()
+    onTriggered: {
+      root.nowMs = Date.now()
+      var next = root.deepseekNextChangeMs
+      if (typeof next !== "number" || next !== next) return
+      if (root.nowMs < next) return
+      if (root.deepseekRefreshForMs === next) return
+      if (root.refreshing || statusProcess.running) return
+      root.deepseekRefreshForMs = next
+      root.refresh()
+    }
   }
 
   IpcHandler {
@@ -435,7 +670,7 @@ Panel {
                 width: parent.width
                 text: root.errorMessage !== ""
                   ? root.errorMessage
-                  : "Unable to query CodeBurn via local CLI, npx, or bunx."
+                  : "Unable to run the CodeBurn fork. Install the local build or put codeburn on PATH."
                 color: root.subtleText
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -454,7 +689,7 @@ Panel {
                 Text {
                   id: codeHint
                   anchors.centerIn: parent
-                  text: "Pinned CodeBurn fallback"
+                  text: "CodeBurn CLI"
                   color: root.accentColor
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -542,6 +777,143 @@ Panel {
                   Text { text: "Cache: " + root.formatTokens(root.cacheReadTokens); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
                 }
               }
+            }
+          }
+
+          // ---------------------------------------------------------- DEEPSEEK
+          PanelSeparator {
+            visible: root.showDeepSeek
+            foreground: root.foreground
+          }
+
+          Column {
+            visible: root.showDeepSeek
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelSectionHeader {
+              text: "DEEPSEEK RATES"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            BorderSurface {
+              visible: root.deepseekPhase !== "" || root.deepseekFlipLine !== "" || root.deepseekWhenLine !== "" || root.deepseekWindowsLine !== "" || root.deepseekHolidayLine !== ""
+              width: parent.width
+              implicitHeight: deepseekPhaseColumn.implicitHeight + Style.space(20)
+              radius: Style.cornerRadius
+              color: root.deepseekPhase !== ""
+                ? Qt.rgba(root.deepseekTone.r, root.deepseekTone.g, root.deepseekTone.b, 0.10)
+                : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+              borderSpec: root.deepseekPhase !== ""
+                ? Border.controlSpec("normal", root.deepseekTone, root.deepseekTone)
+                : Border.none()
+
+              Column {
+                id: deepseekPhaseColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(12)
+                anchors.rightMargin: Style.space(12)
+                spacing: Style.space(3)
+
+                Row {
+                  visible: root.deepseekPhase !== ""
+                  spacing: Style.space(8)
+
+                  Text {
+                    text: root.deepseekPhase === "off-peak" ? "OFF-PEAK" : "PEAK"
+                    color: root.deepseekTone
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    font.letterSpacing: 0.6
+                  }
+
+                  Text {
+                    text: root.deepseekPhase === "off-peak" ? "Off-peak now" : "Peak now"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                  }
+                }
+
+                Text {
+                  visible: root.deepseekFlipLine !== ""
+                  width: deepseekPhaseColumn.width
+                  wrapMode: Text.WordWrap
+                  text: root.deepseekFlipLine
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  visible: root.deepseekWhenLine !== ""
+                  width: deepseekPhaseColumn.width
+                  wrapMode: Text.WordWrap
+                  text: root.deepseekWhenLine
+                  color: root.subtleText
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: root.deepseekWindowsLine !== ""
+                  width: deepseekPhaseColumn.width
+                  wrapMode: Text.WordWrap
+                  text: root.deepseekWindowsLine
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: root.deepseekHolidayLine !== ""
+                  width: deepseekPhaseColumn.width
+                  wrapMode: Text.WordWrap
+                  text: root.deepseekHolidayLine
+                  color: root.subtleText
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+
+            Text {
+              visible: root.deepseekModels.length > 0
+              width: parent.width
+              text: "USD PER 1M TOKENS"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 0.8
+            }
+
+            Repeater {
+              model: root.deepseekModels
+
+              DeepSeekRateCard {
+                width: parent ? parent.width : 0
+                modelLabel: modelData && modelData.label ? String(modelData.label) : ""
+                modelId: modelData && modelData.id ? String(modelData.id) : ""
+                aliases: modelData && modelData.aliases ? String(modelData.aliases) : ""
+                peakRates: modelData && modelData.peak ? modelData.peak : ({})
+                offPeakRates: modelData && modelData.offPeak ? modelData.offPeak : ({})
+              }
+            }
+
+            Text {
+              visible: root.deepseekFootnote !== ""
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.deepseekFootnote
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -849,6 +1221,143 @@ Panel {
         radius: Style.cornerRadius
         color: root.flameColor
         opacity: 0.85
+      }
+    }
+  }
+
+  component DeepSeekRateCard: Column {
+    id: card
+    property string modelLabel: ""
+    property string modelId: ""
+    property string aliases: ""
+    property var peakRates: ({})
+    property var offPeakRates: ({})
+
+    width: parent ? parent.width : 0
+    spacing: Style.space(4)
+
+    Text {
+      width: card.width
+      text: card.modelLabel
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      font.bold: true
+      elide: Text.ElideRight
+    }
+
+    Text {
+      visible: card.modelId !== "" && card.modelId !== card.modelLabel
+      width: card.width
+      text: card.modelId
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
+    }
+
+    Text {
+      visible: card.aliases !== ""
+      width: card.width
+      text: "Also billed as " + card.aliases
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+
+    BorderSurface {
+      width: card.width
+      implicitHeight: rateTable.implicitHeight + Style.space(10)
+      radius: Style.cornerRadius
+      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.03)
+      borderSpec: Border.none()
+
+      Column {
+        id: rateTable
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.space(8)
+        anchors.rightMargin: Style.space(8)
+        spacing: Style.space(2)
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Text {
+            width: Math.max(0, parent.width - parent.spacing * 2) * 0.42
+            text: ""
+          }
+
+          Text {
+            width: Math.max(0, parent.width - parent.spacing * 2) * 0.29
+            text: "PEAK"
+            horizontalAlignment: Text.AlignRight
+            color: root.deepseekPhase === "peak" ? root.deepseekTone : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: root.deepseekPhase === "peak"
+            font.letterSpacing: 0.6
+          }
+
+          Text {
+            width: Math.max(0, parent.width - parent.spacing * 2) * 0.29
+            text: "OFF-PEAK"
+            horizontalAlignment: Text.AlignRight
+            color: root.deepseekPhase === "off-peak" ? root.deepseekTone : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: root.deepseekPhase === "off-peak"
+            font.letterSpacing: 0.6
+          }
+        }
+
+        Repeater {
+          model: root.deepseekRateRows
+
+          Row {
+            required property var modelData
+            readonly property bool peakOn: root.hasRate(card.peakRates, modelData.field)
+            readonly property bool offOn: root.hasRate(card.offPeakRates, modelData.field)
+            visible: peakOn || offOn
+            height: visible ? implicitHeight : 0
+            width: rateTable.width
+            spacing: Style.space(6)
+
+            Text {
+              width: Math.max(0, parent.width - parent.spacing * 2) * 0.42
+              text: modelData && modelData.label ? String(modelData.label) : ""
+              color: root.subtleText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: Math.max(0, parent.width - parent.spacing * 2) * 0.29
+              text: root.rateText(card.peakRates, modelData.field)
+              horizontalAlignment: Text.AlignRight
+              color: !parent.peakOn ? root.dim : (root.deepseekPhase === "peak" ? root.deepseekTone : root.foreground)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: root.deepseekPhase === "peak" && parent.peakOn
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: Math.max(0, parent.width - parent.spacing * 2) * 0.29
+              text: root.rateText(card.offPeakRates, modelData.field)
+              horizontalAlignment: Text.AlignRight
+              color: !parent.offOn ? root.dim : (root.deepseekPhase === "off-peak" ? root.deepseekTone : root.foreground)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: root.deepseekPhase === "off-peak" && parent.offOn
+              elide: Text.ElideRight
+            }
+          }
+        }
       }
     }
   }
