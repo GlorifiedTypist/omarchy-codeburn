@@ -4,8 +4,12 @@ All notable changes to the CodeBurn Omarchy shell plugin will be documented in t
 
 ## Unreleased
 
+### Added
+- **DeepSeek rates**: Popup section, after the period overview, showing the CLI's current peak or off-peak phase, the countdown to `nextChangeAt` in local time and UTC, the published UTC windows, and peak versus off-peak USD per 1M tokens (cache hit, cache miss, output) for each listed model. The current phase column is highlighted.
+- **Bar phase**: When `deepseek.phase` is present, the badge reads `󰈸 $X.XX · peak` or `· off-peak`, and the tooltip includes the next flip. The phase label is the CLI's value at `generated`. The clock only counts down to `nextChangeAt`, and one refresh is issued after that instant so the next phase comes from the CLI.
+
 ### Changed
-- Preserve the local `codeburn` binary as the first choice and pin `npx`/`bunx` fallback execution to `codeburn@0.9.27`.
+- `status.sh` resolves the GlorifiedTypist/codeburn fork (commit `a616400c46e9e3a8a7dfd5251eac751909843d61`) instead of `npx`/`bunx` `codeburn@0.9.27`. Order: `CODEBURN_BIN`, `codeburn` on `PATH`, `CODEBURN_HOME`, `~/.local/src/codeburn`, then `CODEBURN_PACKAGE` only if set. A git/`npx` install of the fork is not used because `dist/` is not published and there is no `prepare` script.
 
 ## [1.1.0] - 2026-08-19
 
