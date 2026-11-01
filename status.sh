@@ -19,7 +19,7 @@ ARGS=(status --format menubar-json --period "$PERIOD" --no-optimize --no-timelin
 # This script does not clone or npx that git URL. The package bin is dist/cli.js, dist/ is
 # gitignored, and there is no prepare script, so `npx github:GlorifiedTypist/codeburn` cannot
 # start. Install a build (README) and let the lookup below find it.
-CODEBURN_FORK_COMMIT="a616400c46e9e3a8a7dfd5251eac751909843d61"
+CODEBURN_FORK_COMMIT="5fc19cc539b4eda10a953db9e9eed02cd2d0ba8e"
 
 fail() {
   printf '%s\n' "$1"
