@@ -123,7 +123,7 @@ Panel {
 
   readonly property bool isOnline: !hasError && statusData !== null
   readonly property string barCostText: isOnline ? formatCost(cost) : "--"
-  readonly property string barStatusText: barPhaseText !== "" ? ("󰈸 " + barCostText + " · " + barPhaseText) : ("󰈸 " + barCostText)
+  readonly property string barStatusText: "󰈸 " + barCostText
   readonly property string barTooltipText: {
     var base = isOnline
       ? ("CodeBurn (" + selectedPeriodLabel + "): " + formatCost(cost) + " · " + calls + " calls · " + sessions + " sessions")
@@ -792,7 +792,7 @@ Panel {
             spacing: Style.space(8)
 
             PanelSectionHeader {
-              text: "DEEPSEEK RATES"
+              text: "DEEPSEEK"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -882,8 +882,9 @@ Panel {
               }
             }
 
+            // Per-model USD rates intentionally hidden: keep only the phase/status block above.
             Text {
-              visible: root.deepseekModels.length > 0
+              visible: false
               width: parent.width
               text: "USD PER 1M TOKENS"
               color: root.dim
@@ -894,8 +895,7 @@ Panel {
             }
 
             Repeater {
-              model: root.deepseekModels
-
+              model: []
               DeepSeekRateCard {
                 width: parent ? parent.width : 0
                 modelLabel: modelData && modelData.label ? String(modelData.label) : ""
@@ -907,7 +907,7 @@ Panel {
             }
 
             Text {
-              visible: root.deepseekFootnote !== ""
+              visible: false
               width: parent.width
               wrapMode: Text.WordWrap
               text: root.deepseekFootnote
