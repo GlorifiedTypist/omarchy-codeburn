@@ -594,11 +594,31 @@ Panel {
     fontSize: Style.font.bodySmall
     horizontalMargin: 4
     tooltipText: root.barTooltipText
+    // Painted by barLabel below so the flame + cost can take the DeepSeek peak/off-peak colour.
+    labelVisible: false
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.refresh()
       else root.toggle()
     }
+  }
+
+  // Bar label: flame + cost in red at DeepSeek peak, green off-peak (theme foreground when unknown);
+  // the " : xx%" quota part stays in the normal bar colour.
+  readonly property color barCostColor: !isOnline ? foreground
+    : (deepseekPhase === "peak" ? "#ef5350" : (deepseekPhase === "off-peak" ? "#66bb6a" : foreground))
+  Text {
+    id: barLabel
+    anchors.centerIn: button
+    textFormat: Text.StyledText
+    font.family: button.fontFamily
+    font.pixelSize: button.fontSize
+    color: root.foreground
+    opacity: button.opacity
+    visible: button.visible
+    renderType: Text.NativeRendering
+    text: '<font color="' + root.barCostColor + '">' + ("󰈸 " + root.barCostText) + '</font>'
+      + (root.barQuotaText !== "" ? " : " + root.barQuotaText : "")
   }
 
   KeyboardPanel {
