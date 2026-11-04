@@ -123,7 +123,18 @@ Panel {
 
   readonly property bool isOnline: !hasError && statusData !== null
   readonly property string barCostText: isOnline ? formatCost(cost) : "--"
-  readonly property string barStatusText: "󰈸 " + barCostText
+  // Grok Bot weekly usage % (the limit shared with Cursor on the unified plan), shown next to the cost.
+  readonly property string barQuotaText: {
+    var list = quotaData && Array.isArray(quotaData.providers) ? quotaData.providers : []
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i]
+      if (p && p.id === "grokbot" && p.available === true && Array.isArray(p.windows) && p.windows.length > 0
+          && typeof p.windows[0].usedPct === "number")
+        return Math.round(p.windows[0].usedPct) + "%"
+    }
+    return ""
+  }
+  readonly property string barStatusText: "󰈸 " + barCostText + (barQuotaText !== "" ? " : " + barQuotaText : "")
   readonly property string barTooltipText: {
     var base = isOnline
       ? ("CodeBurn (" + selectedPeriodLabel + "): " + formatCost(cost) + " · " + calls + " calls · " + sessions + " sessions")
@@ -132,6 +143,7 @@ Panel {
       base += " · DeepSeek " + barPhaseText
       if (deepseekFlipLine !== "") base += " · " + deepseekFlipLine
     }
+    if (barQuotaText !== "") base += " · Grok Bot weekly usage " + barQuotaText
     return base + " (right-click to refresh)"
   }
 
