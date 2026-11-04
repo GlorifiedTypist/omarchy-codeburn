@@ -414,6 +414,9 @@ Panel {
     if (Date.now() - lastUpdatedMs > 60000) {
       refresh()
     }
+    if (Date.now() - quotaUpdatedMs > 60000) {
+      refreshQuota()
+    }
     if (panelFlick) panelFlick.contentY = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -472,6 +475,88 @@ Panel {
       root.deepseekRefreshForMs = next
       root.refresh()
     }
+  }
+
+  // ------------------------------------------------------------- QUOTA
+  property var quotaData: null
+  property string quotaError: ""
+  property double quotaUpdatedMs: 0
+  readonly property int quotaRefreshSec: 300
+  readonly property var quotaProviders: {
+    var list = quotaData && Array.isArray(quotaData.providers) ? quotaData.providers : []
+    return list.filter(function(p) { return p && p.available === true && Array.isArray(p.windows) && p.windows.length > 0 })
+  }
+  readonly property bool showQuota: quotaProviders.length > 0 || quotaError !== ""
+
+  function refreshQuota() {
+    if (quotaProcess.running) return
+    quotaProcess.running = true
+  }
+
+  function parseQuota(raw) {
+    try {
+      var trimmed = String(raw || "").trim()
+      if (!trimmed) { quotaError = "Quota: empty output"; return }
+      var parsed = JSON.parse(trimmed)
+      if (parsed && parsed.error) { quotaError = "Quota: " + String(parsed.error); return }
+      if (!parsed || !Array.isArray(parsed.providers)) { quotaError = "Quota: unexpected output"; return }
+      quotaData = parsed
+      quotaError = ""
+      quotaUpdatedMs = Date.now()
+    } catch (e) {
+      quotaError = "Quota: unable to parse CodeBurn output"
+    }
+  }
+
+  function formatResetDate(iso) {
+    var ms = Date.parse(iso)
+    if (!(ms === ms)) return ""
+    var d = new Date(ms)
+    var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    var pad = function(n) { return (n < 10 ? "0" : "") + n }
+    return days[d.getDay()] + " " + d.getDate() + " " + months[d.getMonth()] + " " + pad(d.getHours()) + ":" + pad(d.getMinutes())
+  }
+
+  function formatResetRelative(iso, now) {
+    var ms = Date.parse(iso)
+    if (!(ms === ms)) return ""
+    var diff = ms - now
+    if (diff <= 0) return "now"
+    var totalMin = Math.floor(diff / 60000)
+    var days = Math.floor(totalMin / 1440)
+    var hours = Math.floor(totalMin / 60) % 24
+    if (days > 0) return "in " + days + "d" + (hours > 0 ? " " + hours + "h" : "")
+    if (hours > 0) return "in " + hours + "h " + (totalMin % 60) + "m"
+    return "in " + Math.max(1, totalMin) + "m"
+  }
+
+  function quotaPct(w) {
+    var n = Number(w && w.usedPct)
+    return n === n ? Math.max(0, Math.min(100, n)) : 0
+  }
+
+  Process {
+    id: quotaProcess
+    command: ["timeout", "45", root.statusCommand, "quota"]
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.parseQuota(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 124) root.quotaError = "Quota: CodeBurn timed out"
+      else if (exitCode !== 0 && root.quotaError === "") root.quotaError = "Quota: CodeBurn exited with code " + exitCode
+    }
+  }
+
+  Timer {
+    id: quotaTimer
+    interval: root.quotaRefreshSec * 1000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.refreshQuota()
   }
 
   IpcHandler {
@@ -933,6 +1018,149 @@ Panel {
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+            }
+          }
+
+          // ------------------------------------------------------------- QUOTA
+          PanelSeparator {
+            visible: root.showQuota
+            foreground: root.foreground
+          }
+
+          Column {
+            visible: root.showQuota
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelSectionHeader {
+              text: "QUOTA"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              visible: root.quotaError !== "" && root.quotaProviders.length === 0
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.quotaError
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Repeater {
+              model: root.quotaProviders
+
+              BorderSurface {
+                id: quotaCard
+                required property var modelData
+                width: parent ? parent.width : 0
+                implicitHeight: quotaColumn.implicitHeight + Style.space(16)
+                radius: Style.cornerRadius
+                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.03)
+                borderSpec: Border.none()
+
+                Column {
+                  id: quotaColumn
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  anchors.margins: Style.space(8)
+                  anchors.leftMargin: Style.space(12)
+                  anchors.rightMargin: Style.space(12)
+                  spacing: Style.space(6)
+
+                  Row {
+                    spacing: Style.space(8)
+                    Text {
+                      text: String(quotaCard.modelData.name || quotaCard.modelData.id || "Provider")
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                    }
+                    Text {
+                      visible: !!quotaCard.modelData.plan
+                      text: String(quotaCard.modelData.plan || "")
+                      color: root.subtleText
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+
+                  Repeater {
+                    model: quotaCard.modelData.windows
+
+                    Column {
+                      required property var modelData
+                      width: quotaColumn.width
+                      spacing: Style.space(3)
+
+                      Item {
+                        width: parent.width
+                        implicitHeight: winLabel.implicitHeight
+                        Text {
+                          id: winLabel
+                          anchors.left: parent.left
+                          text: String(modelData.label || "")
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+                        Text {
+                          anchors.right: parent.right
+                          text: (Math.round(root.quotaPct(modelData) * 10) / 10) + "% used"
+                          color: root.quotaPct(modelData) >= 90 ? root.urgent : root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+                      }
+
+                      Rectangle {
+                        width: parent.width
+                        height: Style.space(4)
+                        radius: height / 2
+                        color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
+                        Rectangle {
+                          width: parent.width * root.quotaPct(modelData) / 100
+                          height: parent.height
+                          radius: parent.radius
+                          color: root.quotaPct(modelData) >= 90 ? root.urgent : (root.quotaPct(modelData) >= 70 ? root.flameColor : root.accentColor)
+                        }
+                      }
+
+                      Text {
+                        visible: !!modelData.resetsAt
+                        text: "Resets " + root.formatResetDate(modelData.resetsAt) + " · " + root.formatResetRelative(modelData.resetsAt, root.nowMs)
+                        color: root.subtleText
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+
+                  Text {
+                    visible: !!quotaCard.modelData.error
+                    width: quotaColumn.width
+                    wrapMode: Text.WordWrap
+                    text: String(quotaCard.modelData.error || "")
+                    color: root.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Text {
+                    visible: quotaCard.modelData.id === "grokbot" && Array.isArray(quotaCard.modelData.notes) && quotaCard.modelData.notes.length > 0
+                    width: quotaColumn.width
+                    wrapMode: Text.WordWrap
+                    text: Array.isArray(quotaCard.modelData.notes) ? quotaCard.modelData.notes.join(" · ") : ""
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
             }
           }
 
