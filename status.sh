@@ -7,13 +7,17 @@ export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH:/usr/local/bin
 
 PERIOD="${1:-today}"
 
-# Whitelist allowed period values to ensure safe argument passing.
-case "$PERIOD" in
-  today|week|30days|month|all|lifetime) ;;
-  *) PERIOD="today" ;;
-esac
-
-ARGS=(status --format menubar-json --period "$PERIOD" --no-optimize --no-timeline)
+# `status.sh quota` prints live provider quota JSON instead of spend status.
+if [[ "$PERIOD" == "quota" ]]; then
+  ARGS=(quota --format json)
+else
+  # Whitelist allowed period values to ensure safe argument passing.
+  case "$PERIOD" in
+    today|week|30days|month|all|lifetime) ;;
+    *) PERIOD="today" ;;
+  esac
+  ARGS=(status --format menubar-json --period "$PERIOD" --no-optimize --no-timeline)
+fi
 
 # GlorifiedTypist/codeburn revision that adds the top-level menubar-json `deepseek` object.
 # This script does not clone or npx that git URL. The package bin is dist/cli.js, dist/ is
